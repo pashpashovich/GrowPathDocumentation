@@ -36,6 +36,11 @@
 ### C4-модель
 
 Иллюстрация и описание архитектура ПС
+Контейнерный уровень представления архитектуры:
+<img width="976" height="1105" alt="image" src="https://github.com/user-attachments/assets/58cd57bd-40d1-4f98-84c6-b962982b0f62" />
+Компонентный уровень представления архитектуры:
+<img width="1519" height="655" alt="image" src="https://github.com/user-attachments/assets/1726de4f-2273-4798-83af-0bdce652b9a5" />
+
 
 ### Схема данных
 
