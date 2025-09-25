@@ -125,4 +125,4 @@
 
 ## **Контакты**
 
-Автор: email
+Косович Павел: pavel.kosovich2004@gmail.com
