@@ -4,7 +4,7 @@
 
 
 **Ссылки на репозитории сервера и клиента**:  
-сервер - https://github.com/pashpashovich/GrowParhServer  
+сервер - https://github.com/pashpashovich/GrowPathServer  
 клиент - https://github.com/pashpashovich/GrowPathClient
 
 **Цель программного средства**: упростить процесс организации стажировок для компаний и улучшить процесс прохождения стажировок для сотрудников.
