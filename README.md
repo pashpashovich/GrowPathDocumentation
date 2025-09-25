@@ -44,7 +44,7 @@
 
 **Контейнерный уровень представления архитектуры**
 
-<img width="976" height="1105" alt="image" src="https://github.com/user-attachments/assets/58cd57bd-40d1-4f98-84c6-b962982b0f62" />
+<img width="1291" height="1461" alt="Контейнерный уроверь drawio (1)" src="https://github.com/user-attachments/assets/9df61b40-e437-4488-8862-5e7d25319d17" />
 
 **Компонентный уровень представления архитектуры**
 
