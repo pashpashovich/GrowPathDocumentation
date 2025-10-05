@@ -68,7 +68,24 @@
 
 ### User-flow диаграммы
 
-Описание переходов между части ПС для всех ролей из диаграммы ВИ (название ролей должны совпадать с тем, что указано на c4-модели и диаграмме вариантов использования)
+**User-flow диаграмма стажера**
+
+<img width="7369" height="2130" alt="User flow diploma (1)" src="https://github.com/user-attachments/assets/b19ed33a-d01c-446c-a51e-ab6246b3d8a0" />
+
+
+**User-flow диаграмма ментора**
+
+<img width="7592" height="2320" alt="User flow diploma (4)" src="https://github.com/user-attachments/assets/05262286-7bc6-4b84-a616-24a64366c9a2" />
+
+
+**User-flow диаграмма HR-менеджера**
+
+<img width="7287" height="2320" alt="User flow diploma (5)" src="https://github.com/user-attachments/assets/385b8b36-53da-4462-b195-8e0bfe574065" />
+
+
+**User-flow диаграмма администратора**
+
+<img width="5852" height="1675" alt="User flow diploma (6)" src="https://github.com/user-attachments/assets/37a0dafc-9a5a-4dd5-8665-1d093075a96f" />
 
 
 ---
