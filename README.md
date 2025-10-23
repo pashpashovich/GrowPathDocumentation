@@ -60,12 +60,12 @@
 
 **Физическая схема БД interhship**
 
-![Internship (3).png](../../../../../Downloads/Internship%20%283%29.png)
+![Internship.png](Internship.png)
 
 
 **Физическая схема БД notification**
 
-![notification (1).png](../../../../../Downloads/notification%20%281%29.png)
+![notification.png](notification.png)
 
 ---
 
