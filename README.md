@@ -183,7 +183,344 @@
 
 ### Безопасность
 
-Описать подходы, использованные для обеспечения безопасности, включая описание процессов аутентификации и авторизации с примерами кода из репозитория сервера
+#### Система аутентификации и авторизации
+
+##### Обзор
+
+В системе реализована комплексная система аутентификации и авторизации на основе OAuth2/OpenID Connect с использованием Keycloak в качестве Identity Provider. Все запросы проходят через API Gateway, который обеспечивает централизованную аутентификацию и авторизацию.
+
+##### Используемые компоненты
+
+###### 1. Keycloak
+**Keycloak** - это open-source решение для управления идентификацией и доступом (IAM), которое обеспечивает:
+- Централизованную аутентификацию пользователей
+- Управление ролями и правами доступа
+- Поддержку протоколов OAuth2 и OpenID Connect
+- Выдачу JWT токенов
+
+###### 2. Spring Security OAuth2 Resource Server
+Используется для валидации JWT токенов на стороне микросервисов. Автоматически проверяет подпись токенов через JWK Set endpoint Keycloak.
+
+###### 3. Spring Cloud Gateway
+Обеспечивает маршрутизацию запросов и обработку аутентификации через кастомные фильтры.
+
+##### Архитектура системы безопасности
+
+```
+┌─────────────┐
+│   Client    │
+│ (Frontend)  │
+└──────┬──────┘
+       │
+       │ HTTP Request
+       ▼
+┌─────────────────────────────────┐
+│       API Gateway               │
+│  ┌──────────────────────────┐  │
+│  │  CORS Filter             │  │
+│  └──────────────────────────┘  │
+│  ┌──────────────────────────┐  │
+│  │  Security Filter Chain   │  │
+│  │  - JWT Validation        │  │
+│  │  - Authorization          │  │
+│  └──────────────────────────┘  │
+│  ┌──────────────────────────┐  │
+│  │  Auth Filters            │  │
+│  │  - Login                 │  │
+│  │  - Logout                │  │
+│  │  - Refresh Token         │  │
+│  └──────────────────────────┘  │
+└──────┬──────────────────────────┘
+       │
+       ├─────────────────┐
+       │                 │
+       ▼                 ▼
+┌─────────────┐   ┌──────────────┐
+│  Keycloak   │   │  Microservices│
+│  (IAM)      │   │  - Trainee   │
+│             │   │  - Notification│
+└─────────────┘   └──────────────┘
+```
+
+##### Реализация аутентификации
+
+###### 1. Конфигурация Spring Security
+
+```java
+@Configuration
+@EnableWebFluxSecurity
+public class SecurityConfig {
+
+    @Bean
+    public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
+        http
+                .csrf(ServerHttpSecurity.CsrfSpec::disable)
+                .authorizeExchange(exchanges -> exchanges
+                        .pathMatchers("/actuator/**", "/health").permitAll()
+                        .pathMatchers("/api/auth/login", "/api/auth/logout", "/api/auth/refresh").permitAll()
+                        .pathMatchers("/api/auth/user", "/api/auth/validate").authenticated()
+                        .anyExchange().authenticated()
+                )
+                .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> {
+                }));
+
+        return http.build();
+    }
+}
+```
+
+###### 2. Сервис аутентификации
+
+```java
+@Service
+public class AuthService {
+
+    private final WebClient webClient;
+    private final String keycloakUrl;
+    private final String realm;
+    private final String clientId;
+    private final String clientSecret;
+
+    public Mono<TokenResponse> login(String username, String password) {
+        String tokenUrl = String.format("%s/realms/%s/protocol/openid-connect/token", 
+                keycloakUrl, realm);
+
+        MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
+        formData.add("grant_type", "password");
+        formData.add("client_id", clientId);
+        formData.add("client_secret", clientSecret);
+        formData.add("username", username);
+        formData.add("password", password);
+
+        return webClient.post()
+                .uri(tokenUrl)
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .body(BodyInserters.fromFormData(formData))
+                .retrieve()
+                .bodyToMono(TokenResponse.class)
+                .onErrorMap(ex -> new RuntimeException("Failed to authenticate user", ex));
+    }
+}
+```
+
+###### 3. Gateway Filter для аутентификации
+
+```java
+@Component
+public class KeycloakAuthenticationFilter extends AbstractGatewayFilterFactory<KeycloakAuthenticationFilter.Config> {
+
+    private final AuthService authService;
+    private final ObjectMapper objectMapper;
+
+    @Override
+    public GatewayFilter apply(Config config) {
+        return (exchange, chain) -> {
+            return DataBufferUtils.join(exchange.getRequest().getBody())
+                    .flatMap(dataBuffer -> {
+                        String body = new String(bytes, StandardCharsets.UTF_8);
+                        Map<String, String> loginRequest = objectMapper.readValue(body, Map.class);
+                        
+                        return authService.login(username, password)
+                                .flatMap(tokenResponse -> {
+                                    ServerHttpResponse response = exchange.getResponse();
+                                    response.setStatusCode(HttpStatus.OK);
+                                    String json = objectMapper.writeValueAsString(tokenResponse);
+                                    DataBuffer buffer = response.bufferFactory()
+                                            .wrap(json.getBytes(StandardCharsets.UTF_8));
+                                    return response.writeWith(Mono.just(buffer));
+                                });
+                    });
+        };
+    }
+}
+```
+
+##### Реализация авторизации
+
+###### 1. Извлечение ролей из JWT
+
+```java
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
+public class JwtUtils {
+
+    public static Collection<GrantedAuthority> extractRoles(Jwt jwt) {
+        var realmAccess = (Map<String, Object>) jwt.getClaims().get("realm_access");
+        if (realmAccess == null) {
+            return List.of();
+        }
+
+        var roles = (List<String>) realmAccess.get("roles");
+        if (roles == null) {
+            return List.of();
+        }
+
+        return roles.stream()
+                .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
+                .collect(Collectors.toList());
+    }
+
+    public static boolean hasRole(Jwt jwt, String role) {
+        return extractRoles(jwt).stream()
+                .anyMatch(authority -> authority.getAuthority().equals("ROLE_" + role));
+    }
+}
+```
+
+###### 2. Получение информации о пользователе
+
+```java
+@Component
+public class KeycloakUserInfoFilter extends AbstractGatewayFilterFactory<KeycloakUserInfoFilter.Config> {
+
+    @Override
+    public GatewayFilter apply(Config config) {
+        return (exchange, chain) -> {
+            return exchange.getPrincipal()
+                    .cast(JwtAuthenticationToken.class)
+                    .map(JwtAuthenticationToken::getToken)
+                    .flatMap(jwt -> {
+                        Map<String, Object> userInfo = new HashMap<>();
+                        userInfo.put("username", JwtUtils.getUsername(jwt));
+                        userInfo.put("email", JwtUtils.getEmail(jwt));
+                        userInfo.put("roles", JwtUtils.extractRoles(jwt).stream()
+                                .map(GrantedAuthority::getAuthority)
+                                .toList());
+                        return response.writeWith(Mono.just(buffer));
+                    });
+        };
+    }
+}
+```
+
+##### Механизмы обеспечения безопасности
+
+###### 1. CORS (Cross-Origin Resource Sharing)
+
+Настроен для безопасного взаимодействия с фронтенд-приложением:
+
+```java
+@Configuration
+public class CorsConfig {
+
+    @Bean
+    public CorsWebFilter corsWebFilter() {
+        CorsConfiguration corsConfiguration = new CorsConfiguration();
+        corsConfiguration.setAllowedOrigins(origins);
+        corsConfiguration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        corsConfiguration.setAllowedHeaders(Arrays.asList("Content-Type", "Authorization"));
+        corsConfiguration.setAllowCredentials(true);
+        corsConfiguration.setMaxAge(3600L);
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", corsConfiguration);
+        return new CorsWebFilter(source);
+    }
+}
+```
+
+###### 2. JWT (JSON Web Tokens)
+
+- **Access Token**: используется для доступа к защищенным ресурсам, имеет ограниченное время жизни
+- **Refresh Token**: используется для обновления access token без повторной аутентификации
+- Валидация токенов происходит автоматически через Spring Security OAuth2 Resource Server
+
+###### 3. Система разграничения прав доступа
+
+Роли пользователей хранятся в Keycloak и передаются в JWT токене:
+- Роли извлекаются из токена через `JwtUtils.extractRoles()`
+- Преобразуются в `GrantedAuthority` для использования в Spring Security
+- Проверка прав доступа осуществляется на уровне Gateway и микросервисов
+
+###### 4. Защита от CSRF
+
+CSRF защита отключена в API Gateway, так как используется stateless аутентификация через JWT токены.
+
+###### 5. Шифрование паролей
+
+Keycloak использует современные алгоритмы хеширования паролей (bcrypt, pbkdf2) по умолчанию. Пароли не хранятся в открытом виде.
+
+###### 6. Безопасность передаваемых данных
+
+- Все запросы к защищенным эндпоинтам требуют наличия валидного JWT токена в заголовке `Authorization: Bearer <token>`
+- Токены подписываются с использованием RSA/ECDSA ключей
+- Валидация подписи происходит через JWK Set endpoint Keycloak
+
+##### Маршрутизация аутентификации
+
+Аутентификация реализована через Spring Cloud Gateway фильтры:
+
+```yaml
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: login
+          uri: no://op
+          predicates:
+            - Path=/api/auth/login
+            - Method=POST
+          filters:
+            - KeycloakAuthentication
+        - id: logout
+          uri: no://op
+          predicates:
+            - Path=/api/auth/logout
+            - Method=POST
+          filters:
+            - KeycloakLogout
+        - id: refresh
+          uri: no://op
+          predicates:
+            - Path=/api/auth/refresh
+            - Method=POST
+          filters:
+            - KeycloakRefresh
+```
+
+##### Эндпоинты аутентификации
+
+| Эндпоинт | Метод | Описание | Требует аутентификации |
+|----------|-------|----------|------------------------|
+| `/api/auth/login` | POST | Аутентификация пользователя | Нет |
+| `/api/auth/logout` | POST | Выход из системы | Нет |
+| `/api/auth/refresh` | POST | Обновление access token | Нет |
+| `/api/auth/user` | GET | Получение информации о текущем пользователе | Да |
+| `/api/auth/validate` | GET | Валидация токена | Да |
+
+##### Конфигурация
+
+###### Переменные окружения
+
+```yaml
+KEYCLOAK_URL: http://localhost:8090
+KEYCLOAK_REALM: growpath
+KEYCLOAK_CLIENT_ID: api-gateway
+KEYCLOAK_CLIENT_SECRET: api-gateway-secret
+
+CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
+CORS_ALLOWED_METHODS: GET,POST,PUT,DELETE,OPTIONS
+CORS_ALLOWED_HEADERS: Content-Type,Authorization
+CORS_ALLOW_CREDENTIALS: true
+```
+
+##### Безопасность микросервисов
+
+Каждый микросервис настроен для валидации JWT токенов:
+
+```yaml
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}
+          jwk-set-uri: ${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs
+```
+
+Микросервисы автоматически:
+- Валидируют подпись JWT токена
+- Проверяют срок действия токена
+- Извлекают роли пользователя из токена
+
 
 ### Оценка качества кода
 
