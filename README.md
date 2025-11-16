@@ -31,7 +31,6 @@
 	2. [Интеграционные тесты](#интеграционные-тесты)
 6. [Установка и  запуск](#установка-и--запуск)
 	1. [Манифесты для сборки docker образов](#манифесты-для-сборки-docker-образов)
-	2. [Манифесты для развертывания k8s кластера](#манифесты-для-развертывания-k8s-кластера)
 7. [Лицензия](#Лицензия)
 8. [Контакты](#Контакты)
 
@@ -544,11 +543,426 @@ spring:
 
 ### Манифесты для сборки docker образов
 
-Представить весь код манифестов или ссылки на файлы с ними (при необходимости снабдить комментариями)
+#### Серверная часть
 
-### Манифесты для развертывания k8s кластера
+Dockerfile (api-gateway):
 
-Представить весь код манифестов или ссылки на файлы с ними (при необходимости снабдить комментариями)
+```
+FROM gradle:8.5-jdk21 AS build
+
+WORKDIR /app
+
+COPY build.gradle settings.gradle ./
+COPY api-gateway/build.gradle ./api-gateway/
+COPY common/build.gradle ./common/
+
+COPY common/src ./common/src
+COPY api-gateway/src ./api-gateway/src
+
+RUN gradle :api-gateway:bootJar --no-daemon
+
+FROM eclipse-temurin:21-jre-alpine
+
+WORKDIR /app
+
+RUN addgroup -S spring && adduser -S spring -G spring
+USER spring:spring
+
+COPY --from=build /app/api-gateway/build/libs/*.jar app.jar
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/actuator/health || exit 1
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+Dockerfile (trainee-service):
+
+```
+FROM gradle:8.5-jdk21 AS build
+
+WORKDIR /app
+
+COPY build.gradle settings.gradle ./
+COPY trainee-service/build.gradle ./trainee-service/
+COPY common/build.gradle ./common/
+
+COPY common/src ./common/src
+COPY trainee-service/src ./trainee-service/src
+
+RUN gradle :trainee-service:bootJar --no-daemon
+
+FROM eclipse-temurin:21-jre-alpine
+
+WORKDIR /app
+
+RUN addgroup -S spring && adduser -S spring -G spring
+USER spring:spring
+
+COPY --from=build /app/trainee-service/build/libs/*.jar app.jar
+
+EXPOSE 8081
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8081/actuator/health || exit 1
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+Dockerfile (notification-service):
+
+```
+FROM gradle:8.5-jdk21 AS build
+
+WORKDIR /app
+
+COPY build.gradle settings.gradle ./
+COPY notification-service/build.gradle ./notification-service/
+COPY common/build.gradle ./common/
+
+COPY common/src ./common/src
+COPY notification-service/src ./notification-service/src
+
+RUN gradle :notification-service:bootJar --no-daemon
+
+FROM eclipse-temurin:21-jre-alpine
+
+WORKDIR /app
+
+RUN addgroup -S spring && adduser -S spring -G spring
+USER spring:spring
+
+COPY --from=build /app/notification-service/build/libs/*.jar app.jar
+
+EXPOSE 8082
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8082/actuator/health || exit 1
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+docker-compose.yaml:
+
+```yaml
+services:
+  trainee-db:
+    env_file:
+      - .env
+    image: postgres:latest
+    container_name: trainee-db
+    environment:
+      POSTGRES_DB: TRAINEE_DB
+      POSTGRES_USER: ${TRAINEE_DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${TRAINEE_DB_PASSWORD:-postgres}
+    ports:
+      - "${TRAINEE_DB_PORT:-5432}:5432"
+    volumes:
+      - trainee_db_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  notification-db:
+    env_file:
+      - .env
+    image: postgres:latest
+    container_name: notification-db
+    environment:
+      POSTGRES_DB: NOTIFICATION_DB
+      POSTGRES_USER: ${NOTIFICATION_DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${NOTIFICATION_DB_PASSWORD:-postgres}
+    ports:
+      - "${NOTIFICATION_DB_PORT:-5433}:5432"
+    volumes:
+      - notification_db_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    env_file:
+      - .env
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "${KAFKA_PORT:-9092}:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_INTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:${KAFKA_PORT:-9092},PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  minio:
+    env_file:
+      - .env
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  keycloak:
+    env_file:
+      - .env
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: keycloak-gp
+    command: start-dev --import-realm
+    ports:
+      - "${KEYCLOAK_PORT:-8090}:8080"
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USERNAME:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/${KEYCLOAK_DB_NAME:-keycloak}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USERNAME:-keycloak}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
+      KC_HTTP_ENABLED: "true"
+    volumes:
+      - ./keycloak/realm-config.json:/opt/keycloak/data/import/realm-config.json
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 15
+      start_period: 180s
+
+  keycloak-db:
+    env_file:
+      - .env
+    image: postgres:latest
+    container_name: keycloak-db
+    environment:
+      POSTGRES_DB: ${KEYCLOAK_DB_NAME:-keycloak}
+      POSTGRES_USER: ${KEYCLOAK_DB_USERNAME:-keycloak}
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-keycloak}
+    ports:
+      - "${KEYCLOAK_DB_PORT:-5434}:5432"
+    volumes:
+      - keycloak_db_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: api-gateway/Dockerfile
+    container_name: api-gateway
+    env_file:
+      - .env
+    ports:
+      - "${API_GATEWAY_PORT:-8080}:8080"
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-local}
+      TRAINEE_DB_URL: jdbc:postgresql://trainee-db:5432/TRAINEE_DB
+      NOTIFICATION_DB_URL: jdbc:postgresql://notification-db:5432/NOTIFICATION_DB
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-growpath}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-api-gateway}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-api-gateway-secret}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      TRAINEE_SERVICE_URL: http://trainee-service:8081
+      NOTIFICATION_SERVICE_URL: http://notification-service:8082
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      CORS_ALLOWED_METHODS: ${CORS_ALLOWED_METHODS:-GET,POST,PUT,DELETE,OPTIONS}
+      CORS_ALLOWED_HEADERS: ${CORS_ALLOWED_HEADERS:-Content-Type,Authorization}
+      CORS_ALLOW_CREDENTIALS: ${CORS_ALLOW_CREDENTIALS:-true}
+    depends_on:
+      trainee-db:
+        condition: service_healthy
+      notification-db:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+      kafka:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+
+  trainee-service:
+    build:
+      context: .
+      dockerfile: trainee-service/Dockerfile
+    container_name: trainee-service
+    env_file:
+      - .env
+    ports:
+      - "${TRAINEE_SERVICE_PORT:-8081}:8081"
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-local}
+      TRAINEE_DB_URL: jdbc:postgresql://trainee-db:5432/TRAINEE_DB
+      TRAINEE_DB_USERNAME: ${TRAINEE_DB_USERNAME:-postgres}
+      TRAINEE_DB_PASSWORD: ${TRAINEE_DB_PASSWORD:-postgres}
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-growpath}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TRAINEE_GROUP_ID: ${KAFKA_TRAINEE_GROUP_ID:-trainee-service-group}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET_NAME:-growpath-storage}
+      JPA_DDL_AUTO: ${JPA_DDL_AUTO:-update}
+    depends_on:
+      trainee-db:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8081/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: notification-service/Dockerfile
+    container_name: notification-service
+    env_file:
+      - .env
+    ports:
+      - "${NOTIFICATION_SERVICE_PORT:-8082}:8082"
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-local}
+      NOTIFICATION_DB_URL: jdbc:postgresql://notification-db:5432/NOTIFICATION_DB
+      NOTIFICATION_DB_USERNAME: ${NOTIFICATION_DB_USERNAME:-postgres}
+      NOTIFICATION_DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:-postgres}
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-growpath}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_NOTIFICATION_GROUP_ID: ${KAFKA_NOTIFICATION_GROUP_ID:-notification-service-group}
+      JPA_DDL_AUTO: ${JPA_DDL_AUTO:-update}
+    depends_on:
+      notification-db:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8082/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  trainee_db_data:
+  notification_db_data:
+  keycloak_db_data:
+  minio_data:
+```
+
+#### Клиентская часть
+
+Dockerfile:
+
+```
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN npm ci --only=production=false
+
+COPY . .
+
+ARG REACT_APP_API_URL
+ENV REACT_APP_API_URL=$REACT_APP_API_URL
+
+RUN npm run build
+
+FROM nginx:alpine
+
+COPY --from=builder /app/build /usr/share/nginx/html
+
+COPY deployment/nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
+
+```
+
+docker-compose.yaml:
+
+```yaml
+services:
+  growpath-client:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+      args:
+        REACT_APP_API_URL: ${REACT_APP_API_URL:-http://localhost:8080/api}
+    container_name: growpath-client
+    ports:
+      - "${CLIENT_PORT:-3000}:80"
+    environment:
+      - REACT_APP_API_URL=${REACT_APP_API_URL:-http://localhost:8080/api}
+    restart: unless-stopped
+    networks:
+      - growpath-network
+
+networks:
+  growpath-network:
+    driver: bridge
+```
 
 ---
 
