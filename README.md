@@ -280,6 +280,25 @@ public class AuthService {
     private final String clientId;
     private final String clientSecret;
 
+    public AuthService(
+            WebClient.Builder webClientBuilder,
+            @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}") String issuerUri,
+            @Value("${keycloak.client.id:api-gateway}") String clientId,
+            @Value("${keycloak.client.secret:api-gateway-secret}") String clientSecret) {
+        this.webClient = webClientBuilder.build();
+
+        if (issuerUri.contains("/realms/")) {
+            int realmsIndex = issuerUri.indexOf("/realms/");
+            this.keycloakUrl = issuerUri.substring(0, realmsIndex);
+            this.realm = issuerUri.substring(realmsIndex + "/realms/".length());
+        } else {
+            this.keycloakUrl = "http://localhost:8090";
+            this.realm = "growpath";
+        }
+        this.clientId = clientId;
+        this.clientSecret = clientSecret;
+    }
+
     public Mono<TokenResponse> login(String username, String password) {
         String tokenUrl = String.format("%s/realms/%s/protocol/openid-connect/token", 
                 keycloakUrl, realm);
@@ -299,37 +318,149 @@ public class AuthService {
                 .bodyToMono(TokenResponse.class)
                 .onErrorMap(ex -> new RuntimeException("Failed to authenticate user", ex));
     }
+
+    public Mono<TokenResponse> refreshToken(String refreshToken) {
+        String tokenUrl = String.format("%s/realms/%s/protocol/openid-connect/token", 
+                keycloakUrl, realm);
+
+        MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
+        formData.add("grant_type", "refresh_token");
+        formData.add("client_id", clientId);
+        formData.add("client_secret", clientSecret);
+        formData.add("refresh_token", refreshToken);
+
+        return webClient.post()
+                .uri(tokenUrl)
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .body(BodyInserters.fromFormData(formData))
+                .retrieve()
+                .bodyToMono(TokenResponse.class)
+                .onErrorMap(ex -> new RuntimeException("Failed to refresh token", ex));
+    }
+
+    public Mono<Void> logout(String refreshToken) {
+        String logoutUrl = String.format("%s/realms/%s/protocol/openid-connect/logout", 
+                keycloakUrl, realm);
+
+        MultiValueMap<String, String> formData = new LinkedMultiValueMap<>();
+        formData.add("client_id", clientId);
+        formData.add("client_secret", clientSecret);
+        formData.add("refresh_token", refreshToken);
+
+        return webClient.post()
+                .uri(logoutUrl)
+                .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                .body(BodyInserters.fromFormData(formData))
+                .retrieve()
+                .bodyToMono(Void.class)
+                .onErrorMap(ex -> new RuntimeException("Failed to logout", ex));
+    }
+
+    public String getAuthorizationUrl(String redirectUri) {
+        return String.format("%s/realms/%s/protocol/openid-connect/auth?client_id=%s&redirect_uri=%s&response_type=code&scope=openid profile email roles",
+                keycloakUrl, realm, clientId, redirectUri);
+    }
 }
 ```
 
 ###### 3. Gateway Filter для аутентификации
 
 ```java
+@Slf4j
 @Component
 public class KeycloakAuthenticationFilter extends AbstractGatewayFilterFactory<KeycloakAuthenticationFilter.Config> {
 
     private final AuthService authService;
     private final ObjectMapper objectMapper;
 
+    public KeycloakAuthenticationFilter(AuthService authService, ObjectMapper objectMapper) {
+        super(Config.class);
+        this.authService = authService;
+        this.objectMapper = objectMapper;
+    }
+
+    @Override
+    public String name() {
+        return "KeycloakAuthentication";
+    }
+
     @Override
     public GatewayFilter apply(Config config) {
         return (exchange, chain) -> {
-            return DataBufferUtils.join(exchange.getRequest().getBody())
+            ServerHttpRequest request = exchange.getRequest();
+
+            return DataBufferUtils.join(request.getBody())
                     .flatMap(dataBuffer -> {
+                        byte[] bytes = new byte[dataBuffer.readableByteCount()];
+                        dataBuffer.read(bytes);
+                        DataBufferUtils.release(dataBuffer);
+
                         String body = new String(bytes, StandardCharsets.UTF_8);
-                        Map<String, String> loginRequest = objectMapper.readValue(body, Map.class);
-                        
-                        return authService.login(username, password)
-                                .flatMap(tokenResponse -> {
-                                    ServerHttpResponse response = exchange.getResponse();
-                                    response.setStatusCode(HttpStatus.OK);
-                                    String json = objectMapper.writeValueAsString(tokenResponse);
-                                    DataBuffer buffer = response.bufferFactory()
-                                            .wrap(json.getBytes(StandardCharsets.UTF_8));
-                                    return response.writeWith(Mono.just(buffer));
-                                });
-                    });
+
+                        try {
+                            @SuppressWarnings("unchecked")
+                            Map<String, String> loginRequest = objectMapper.readValue(body, Map.class);
+                            String username = loginRequest.get("username");
+                            String password = loginRequest.get("password");
+
+                            if (!StringUtils.hasText(username) || !StringUtils.hasText(password)) {
+                                return handleError(exchange, HttpStatus.BAD_REQUEST,
+                                                   "Username and password are required");
+                            }
+
+                            return authService.login(username, password)
+                                    .flatMap(tokenResponse -> {
+                                        ServerHttpResponse response = exchange.getResponse();
+                                        response.setStatusCode(HttpStatus.OK);
+                                        response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+
+                                        try {
+                                            String json = objectMapper.writeValueAsString(tokenResponse);
+                                            DataBuffer buffer = response.bufferFactory()
+                                                    .wrap(json.getBytes(StandardCharsets.UTF_8));
+                                            return response.writeWith(Mono.just(buffer));
+                                        }
+                                        catch (JsonProcessingException e) {
+                                            return handleError(exchange, HttpStatus.INTERNAL_SERVER_ERROR,
+                                                               "Error serializing response");
+                                        }
+                                    })
+                                    .onErrorResume(ex -> {
+                                        log.error("Authentication failed", ex);
+                                        return handleError(exchange, HttpStatus.UNAUTHORIZED,
+                                                           "Authentication failed: " + ex.getMessage());
+                                    });
+                        }
+                        catch (JsonProcessingException e) {
+                            log.error("Error parsing login request", e);
+                            return handleError(exchange, HttpStatus.BAD_REQUEST, "Invalid request body");
+                        }
+                    })
+                    .switchIfEmpty(handleError(exchange, HttpStatus.BAD_REQUEST, "Request body is required"));
         };
+    }
+
+    private Mono<Void> handleError(ServerWebExchange exchange, HttpStatus status, String message) {
+        ServerHttpResponse response = exchange.getResponse();
+        response.setStatusCode(status);
+        response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+
+        try {
+            Map<String, String> errorResponse = Map.of(
+                    "error", status.getReasonPhrase(),
+                    "message", message
+            );
+            String json = objectMapper.writeValueAsString(errorResponse);
+            DataBuffer buffer = response.bufferFactory().wrap(json.getBytes(StandardCharsets.UTF_8));
+            return response.writeWith(Mono.just(buffer));
+        }
+        catch (JsonProcessingException e) {
+            DataBuffer buffer = response.bufferFactory().wrap(message.getBytes(StandardCharsets.UTF_8));
+            return response.writeWith(Mono.just(buffer));
+        }
+    }
+
+    public static class Config {
     }
 }
 ```
@@ -343,11 +474,13 @@ public class KeycloakAuthenticationFilter extends AbstractGatewayFilterFactory<K
 public class JwtUtils {
 
     public static Collection<GrantedAuthority> extractRoles(Jwt jwt) {
-        var realmAccess = (Map<String, Object>) jwt.getClaims().get("realm_access");
+        @SuppressWarnings("unchecked")
+        var realmAccess = (java.util.Map<String, Object>) jwt.getClaims().get("realm_access");
         if (realmAccess == null) {
             return List.of();
         }
 
+        @SuppressWarnings("unchecked")
         var roles = (List<String>) realmAccess.get("roles");
         if (roles == null) {
             return List.of();
@@ -361,6 +494,26 @@ public class JwtUtils {
     public static boolean hasRole(Jwt jwt, String role) {
         return extractRoles(jwt).stream()
                 .anyMatch(authority -> authority.getAuthority().equals("ROLE_" + role));
+    }
+
+    public static String getUsername(Jwt jwt) {
+        Object claim = jwt.getClaims().get("preferred_username");
+        return claim instanceof String ? (String) claim : null;
+    }
+
+    public static String getEmail(Jwt jwt) {
+        Object claim = jwt.getClaims().get("email");
+        return claim instanceof String ? (String) claim : null;
+    }
+
+    public static String getFirstName(Jwt jwt) {
+        Object claim = jwt.getClaims().get("given_name");
+        return claim instanceof String ? (String) claim : null;
+    }
+
+    public static String getLastName(Jwt jwt) {
+        Object claim = jwt.getClaims().get("family_name");
+        return claim instanceof String ? (String) claim : null;
     }
 }
 ```
@@ -401,16 +554,40 @@ public class KeycloakUserInfoFilter extends AbstractGatewayFilterFactory<Keycloa
 @Configuration
 public class CorsConfig {
 
+    @Value("${cors.allowed-origins:http://localhost:3000,http://localhost:5173}")
+    private String allowedOrigins;
+
+    @Value("${cors.allowed-methods:GET,POST,PUT,DELETE,OPTIONS}")
+    private String allowedMethods;
+
+    @Value("${cors.allowed-headers:Content-Type,Authorization}")
+    private String allowedHeaders;
+
+    @Value("${cors.allow-credentials:true}")
+    private boolean allowCredentials;
+
     @Bean
     public CorsWebFilter corsWebFilter() {
         CorsConfiguration corsConfiguration = new CorsConfiguration();
+        
+        List<String> origins = Arrays.asList(allowedOrigins.split(","));
         corsConfiguration.setAllowedOrigins(origins);
-        corsConfiguration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        corsConfiguration.setAllowedHeaders(Arrays.asList("Content-Type", "Authorization"));
-        corsConfiguration.setAllowCredentials(true);
+        
+        List<String> methods = Arrays.asList(allowedMethods.split(","));
+        corsConfiguration.setAllowedMethods(methods);
+        
+        List<String> headers = Arrays.asList(allowedHeaders.split(","));
+        corsConfiguration.setAllowedHeaders(headers);
+        
+        corsConfiguration.setAllowCredentials(allowCredentials);
+        
+        corsConfiguration.setExposedHeaders(Arrays.asList("Authorization", "Content-Type"));
+        
         corsConfiguration.setMaxAge(3600L);
+
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", corsConfiguration);
+
         return new CorsWebFilter(source);
     }
 }
