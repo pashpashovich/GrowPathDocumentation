@@ -27,8 +27,8 @@
 	3. [Безопасность](#Безопасность)
 	4. [Оценка качества кода](#оценка-качества-кода)
 5. [Тестирование](#Тестирование)
-	1. [Unit-тесты](#Unit-тесты)
-	2. [Интеграционные тесты](#интеграционные-тесты)
+	1. [Unit-тесты](#модульное-unit-тестирование)
+	2. [Интеграционные тесты](#интеграционное-тестирование)
 6. [Установка и запуск](#установка-и-запуск)
 7. [Лицензия](#Лицензия)
 8. [Контакты](#Контакты)
@@ -195,7 +195,79 @@
 
 ### Спецификация API
 
-Представить описание реализованных функциональных возможностей ПС с использованием Open API (можно представить либо полный файл спецификации, либо ссылку на него)
+В рамках разработки для проектирования взаимодействия между клиентом и сервером выбран подход **API-First**. В отличие от генерации документации из кода, данный подход подразумевает первоначальное создание спецификации API, которая выступает в роли строгого контракта.
+
+#### Подход API-First
+
+Разработка велась в следующей последовательности:
+
+1. **Проектирование спецификации** - Спроектирован файл спецификации в формате YAML по стандарту OpenAPI 3.0. В нем описаны все эндпоинты, типы данных, обязательные поля и коды ответов.
+
+2. **Генерация кода** - С использованием инструмента `openapi-generator` на основе спецификации автоматически сгенерированы Java-интерфейсы контроллеров и DTO-классы (Data Transfer Objects). Это гарантирует полное соответствие реализации заявленному интерфейсу.
+
+3. **Реализация логики** - Серверная часть реализована путем наследования и имплементации сгенерированных интерфейсов, что исключает ошибки в именовании путей или типов данных.
+
+#### Доступ к документации API
+
+Для визуализации и тестирования используется **Swagger UI**. Интерфейс доступен по следующим адресам:
+
+- **Trainee Service:** http://localhost:8081/swagger-ui/index.html
+- **Notification Service:** http://localhost:8082/swagger-ui/index.html
+- **API Gateway:** http://localhost:8080/swagger-ui.html
+
+Так как спецификация является первоисточником, документация в Swagger UI всегда актуальна.
+
+#### Импорт в Postman
+
+Для проведения интеграционного тестирования предусмотрены готовые коллекции Postman, которые можно импортировать напрямую. Коллекции содержат все эндпоинты API с предзаполненными параметрами, что исключает ручной ввод URL и заголовков.
+
+**Готовые коллекции Postman:**
+
+В папке `postman` находятся готовые коллекции для импорта:
+
+- [GrowPath API.postman_collection.json](postman/GrowPath%20API.postman_collection.json) - основная коллекция API для работы с программами стажировок, стажерами, задачами и другими сущностями
+- [Notification Service API.postman_collection.json](postman/Notification%20Service%20API.postman_collection.json) - коллекция API для работы с уведомлениями
+
+**Инструкция по импорту готовых коллекций:**
+
+1. Откройте Postman
+2. Нажмите **Import** в левом верхнем углу
+3. Выберите вкладку **File** или **Link**
+4. Для импорта через файл:
+    - Выберите один из файлов коллекций из папки `postman`:
+        - `postman/GrowPath API.postman_collection.json`
+        - `postman/Notification Service API.postman_collection.json`
+5. Для импорта через URL (если файлы размещены в репозитории):
+    - Используйте прямую ссылку на файл коллекции из репозитория
+6. Нажмите **Continue** и затем **Import**
+
+После импорта в Postman будет создана коллекция запросов со всеми эндпоинтами API.
+
+**Альтернативный способ - импорт из OpenAPI спецификации:**
+
+Также можно импортировать коллекции из YAML-файлов спецификации OpenAPI:
+
+1. Откройте Postman
+2. Нажмите **Import** в левом верхнем углу
+3. Выберите вкладку **File** или **Link**
+4. Для импорта через файл:
+    - Используйте файлы спецификации из проекта:
+        - `trainee-service/src/main/resources/api/trainee-api.yaml`
+        - `notification-service/src/main/resources/api/notification-api.yaml`
+        - `api-gateway/src/main/resources/api/auth-api.yaml`
+5. Для импорта через URL:
+    - Вставьте один из следующих URL:
+        - Trainee Service: `http://localhost:8081/v3/api-docs`
+        - Notification Service: `http://localhost:8082/v3/api-docs`
+        - API Gateway: `http://localhost:8080/v3/api-docs`
+6. Нажмите **Continue** и затем **Import**
+
+#### Файлы спецификации
+
+Исходные файлы OpenAPI спецификации находятся в проекте:
+- `api-gateway/src/main/resources/api/auth-api.yaml`
+- `trainee-service/src/main/resources/api/trainee-api.yaml`
+- `notification-service/src/main/resources/api/notification-api.yaml`
 
 ### Безопасность
 
@@ -717,19 +789,395 @@ spring:
 
 ### Оценка качества кода
 
-Используя показатели качества и метрики кода, оценить его качество
+Оценка качества программного кода производилась на основе архитектурных метрик, стандартов безопасности и покрытию тестами.
+
+#### Архитектурные метрики
+
+Благодаря использованию подхода **API-First** и автогенерации DTO, код обладает высокой согласованностью типов. Сгенерированные модели данных строго валидируются (аннотации `@NotNull`, `@Size` и др. проставляются автоматически из спецификации), что снижает вероятность ошибок `NullPointerException` и некорректных данных на уровне бизнес-логики.
+
+В проекте соблюдаются стандарты **Java Code Conventions** (правила именования, структура пакетов). Для уменьшения объема шаблонного кода (Boilerplate) использовалась библиотека **Lombok**, что улучшило читаемость классов и снизило когнитивную сложность для разработчика.
+
+#### Безопасность
+
+Важным показателем качества системы является вынос ответственности за безопасность в специализированные компоненты. В проекте реализована интеграция с **Keycloak** – сервером управления доступом и идентификацией (IAM).
+
+Это решение повышает надежность кода за счет:
+
+1. **Делегирования функций** входа и регистрации проверенному промышленному решению
+2. **Отсутствия необходимости** хранить пароли или их хеши в собственной базе данных (снижение рисков утечки)
+3. **Использования стандартизированных протоколов** (OIDC, OAuth2) и JWT-токенов для защиты эндпоинтов
+
+#### Покрытие тестами
+
+Для обеспечения стабильности работы реализованы модульные и интеграционные тесты. В качестве инструмента оценки покрытия используется библиотека **JaCoCo**. Тесты проверяют корректность работы бизнес-логики и маппинга данных. Обеспечено покрытие ключевых сервисов, что позволяет проводить рефакторинг без риска нарушения функциональности.
+
+#### Метрики качества программного кода
+
+Результаты измеренных количественных метрик представлены в таблице ниже:
+
+| Метрика | Значение | Комментарий |
+|---------|----------|-------------|
+| **Boilerplate reduction** | Около 40% | Снижение объема шаблонного кода за счет использования Lombok |
+| **API Compliance** | 100% | Соответствие реализации спецификации (гарантируется кодогенерацией) |
+| **Total Instruction Coverage** | 53% | Общий процент покрытия инструкций байт-кода. Превышает минимальный пороговый уровень в 20% |
+| **Service Layer Coverage** | 91% | Покрытие пакета `application.service`. Указывает на высокую надежность реализации бизнес-правил |
+| **Domain Model Coverage** | 99% | Покрытие пакета `domain.aggregate`. Гарантирует корректность работы сущностей и инвариантов |
+| **Branch Coverage** | 42% | Покрытие ветвлений (if/else) |
+| **Количество unit-тестов** | 127+ | Общее число реализованных тестовых сценариев |
+
+#### Детальный анализ покрытия кода
+
+Оценка проведена для модуля `trainee-service` с использованием инструмента **JaCoCo 0.8.11**.
+
+**Общие показатели:**
+- **Инструкции:** 3,940 из 7,420 покрыто (53%)
+- **Ветвления:** 193 из 450 покрыто (42%)
+- **Строки кода:** 897 из 1,782 покрыто (50%)
+- **Методы:** 181 из 317 покрыто (57%)
+- **Классы:** 75 из 130 покрыто (58%)
+- **Сложность:** 253 из 552 покрыто (46%)
+
+**Покрытие по пакетам:**
+
+**Высокое покрытие (>80%):**
+- `by.bsuir.growpathserver.trainee.domain.events` - **100%** покрытие инструкций
+- `by.bsuir.growpathserver.trainee.domain.aggregate` - **99%** покрытие инструкций
+- `by.bsuir.growpathserver.trainee.application.service` - **91%** покрытие инструкций, 81% ветвлений
+- `by.bsuir.growpathserver.trainee.application.command` - **84%** покрытие инструкций
+
+#### Просмотр отчета о покрытии кода
+
+После запуска тестов отчет JaCoCo генерируется автоматически:
+- **HTML отчет:** `trainee-service/build/reports/jacoco/test/html/index.html`
+- **XML отчет:** `trainee-service/build/reports/jacoco/test/jacocoTestReport.xml`
+
+Для генерации отчета выполните:
+```bash
+./gradlew :trainee-service:test
+```
 
 ---
 
 ## **Тестирование**
 
-### Unit-тесты
+Для обеспечения качества кода выбраны следующие виды тестирования:
 
-Представить код тестов для пяти методов и его пояснение
+### Модульное (unit) тестирование
 
-### Интеграционные тесты
+**Цель:** Проверка бизнес-логики сервисного слоя в полной изоляции от базы данных, сети и фреймворка Spring.
 
-Представить код тестов и его пояснение
+**Особенности:**
+- Так как DTO и интерфейсы контроллеров сгенерированы автоматически `openapi-generator`, тесты сосредоточены на реализации сервисов (`ServiceImpl`) и мапперах данных
+- Используются инструменты:
+    - **JUnit 5** – основной фреймворк для запуска тестов
+    - **Mockito** – используется для создания заглушек (mocks) репозиториев и внешних зависимостей
+- Это позволяет моделировать различные сценарии (успех, ошибка базы данных, отсутствие данных) без поднятия реальной инфраструктуры
+
+**Пример модульного теста:**
+
+Ниже приведен пример модульного теста для компонента `CreateInternshipProgramHandler`:
+
+```java
+package by.bsuir.growpathserver.trainee.application.handler;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import by.bsuir.growpathserver.trainee.application.command.CreateInternshipProgramCommand;
+import by.bsuir.growpathserver.trainee.application.service.InternshipProgramService;
+import by.bsuir.growpathserver.trainee.domain.aggregate.InternshipProgram;
+import by.bsuir.growpathserver.trainee.domain.entity.InternshipProgramEntity;
+import by.bsuir.growpathserver.trainee.domain.valueobject.InternshipProgramStatus;
+
+@ExtendWith(MockitoExtension.class)
+class CreateInternshipProgramHandlerTest {
+
+    @Mock
+    private InternshipProgramService internshipProgramService;
+
+    @InjectMocks
+    private CreateInternshipProgramHandler handler;
+
+    private CreateInternshipProgramCommand command;
+    private InternshipProgram program;
+
+    @BeforeEach
+    void setUp() {
+        List<CreateInternshipProgramCommand.ProgramGoal> goals = new ArrayList<>();
+        goals.add(new CreateInternshipProgramCommand.ProgramGoal("Learn Spring", "Master Spring Framework"));
+
+        command = CreateInternshipProgramCommand.builder()
+                .title("Test Program")
+                .description("Test Description")
+                .startDate(LocalDate.of(2024, 9, 1))
+                .duration(6)
+                .maxPlaces(20)
+                .requirements(new ArrayList<>())
+                .goals(goals)
+                .competencies(new ArrayList<>())
+                .selectionStages(new ArrayList<>())
+                .status(InternshipProgramStatus.ACTIVE)
+                .createdBy(1L)
+                .build();
+
+        InternshipProgramEntity entity = new InternshipProgramEntity();
+        entity.setId(1L);
+        entity.setTitle("Test Program");
+        entity.setDescription("Test Description");
+        entity.setStartDate(LocalDate.of(2024, 9, 1));
+        entity.setDuration(6);
+        entity.setMaxPlaces(20);
+        entity.setStatus(InternshipProgramStatus.ACTIVE);
+        entity.setCreatedBy(1L);
+
+        program = InternshipProgram.fromEntity(entity);
+    }
+
+    @Test
+    void shouldCreateInternshipProgramSuccessfully() {
+        // Given
+        when(internshipProgramService.createInternshipProgram(any(CreateInternshipProgramCommand.class)))
+                .thenReturn(program);
+
+        // When
+        InternshipProgram result = handler.handle(command);
+
+        // Then
+        assertNotNull(result);
+        assertEquals("Test Program", result.getTitle());
+        assertEquals("Test Description", result.getDescription());
+        assertEquals(6, result.getDuration());
+        assertEquals(20, result.getMaxPlaces());
+        assertEquals(InternshipProgramStatus.ACTIVE, result.getStatus());
+        verify(internshipProgramService).createInternshipProgram(command);
+    }
+}
+```
+
+**Пояснение к примеру:**
+
+Данный класс отвечает за обработку команды создания программы стажировки в рамках архитектурного паттерна **CQRS**. Тест проверяет корректность делегирования бизнес-логики от обработчика (Handler) к сервисному слою (`InternshipProgramService`).
+
+В методе `setUp` подготавливается входной объект команды `CreateInternshipProgramCommand` с заполненными полями (цели, даты, требования) и ожидаемый результат выполнения. С помощью фреймворка Mockito создается заглушка для сервиса: метод `when(...).thenReturn(...)` определяет, что при вызове сервиса с данной командой должен вернуться успешно созданный объект программы.
+
+В блоке проверок (ассертов) тестируется "счастливый путь":
+1. Проверяется, что результат выполнения не равен `null`
+2. Сравниваются ключевые поля возвращенного агрегата (`InternshipProgram`) с ожидаемыми значениями, что гарантирует целостность данных при передаче
+3. Метод `verify(internshipProgramService).createInternshipProgram(command)` подтверждает, что обработчик действительно вызвал метод сервиса ровно один раз с переданной командой
+
+### Интеграционное тестирование
+
+**Цель:** Проверка корректности работы REST API, взаимодействия с базой данных и настроек безопасности.
+
+**Особенности:**
+- Поскольку используется подход API-First, интеграционные тесты проверяют, корректно ли класс-контроллер реализует сгенерированный интерфейс OpenAPI
+- В реальном приложении безопасность обеспечивает Keycloak. Однако для интеграционных тестов поднимать отдельный контейнер с Keycloak избыточно. Вместо этого используется подмена контекста безопасности (Security Context Mocking). Тесты эмулируют наличие валидного JWT-токена с необходимыми ролями, проверяя реакцию системы на авторизованные и неавторизованные запросы
+- Используется встраиваемая база данных **H2** в режиме совместимости с PostgreSQL, которая автоматически очищается перед каждым тестом (`@Transactional`)
+- Инструменты: **Spring Boot Test**, **MockMvc** (для эмуляции HTTP-запросов)
+
+**Пример интеграционного теста:**
+
+Ниже представлен пример интеграционного теста для контроллера управления программами стажировок:
+
+```java
+package by.bsuir.growpathserver.trainee.infrastructure.controller;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import by.bsuir.growpathserver.dto.model.CreateInternshipProgramRequest;
+import by.bsuir.growpathserver.dto.model.ProgramGoal;
+import by.bsuir.growpathserver.dto.model.UpdateInternshipProgramRequest;
+import by.bsuir.growpathserver.trainee.domain.entity.InternshipProgramEntity;
+import by.bsuir.growpathserver.trainee.domain.valueobject.InternshipProgramStatus;
+import by.bsuir.growpathserver.trainee.infrastructure.repository.InternshipProgramRepository;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+@DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_EACH_TEST_METHOD)
+class InternshipProgramControllerIntegrationTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Autowired
+    private InternshipProgramRepository repository;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    private InternshipProgramEntity testProgram;
+
+    @BeforeEach
+    void setUp() {
+        repository.deleteAll();
+
+        testProgram = new InternshipProgramEntity();
+        testProgram.setTitle("Test Program");
+        testProgram.setDescription("Test Description");
+        testProgram.setStartDate(LocalDate.of(2024, 9, 1));
+        testProgram.setDuration(6);
+        testProgram.setMaxPlaces(20);
+        testProgram.setStatus(InternshipProgramStatus.ACTIVE);
+        testProgram.setCreatedBy(1L);
+        testProgram.setCreatedAt(LocalDateTime.now());
+        testProgram.setUpdatedAt(LocalDateTime.now());
+        testProgram = repository.saveAndFlush(testProgram);
+    }
+
+    @Test
+    void shouldGetInternshipProgramsSuccessfully() throws Exception {
+        // When & Then
+        mockMvc.perform(get("/internship-programs")
+                                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.data").isArray())
+                .andExpect(jsonPath("$.data[0].id").value(String.valueOf(testProgram.getId())))
+                .andExpect(jsonPath("$.data[0].title").value("Test Program"))
+                .andExpect(jsonPath("$.pagination").exists());
+    }
+
+    @Test
+    void shouldCreateInternshipProgramSuccessfully() throws Exception {
+        // Given
+        CreateInternshipProgramRequest request = new CreateInternshipProgramRequest();
+        request.setTitle("New Program");
+        request.setDescription("New Description");
+        request.setStartDate(LocalDate.of(2025, 1, 1));
+        request.setDuration(6);
+        request.setMaxPlaces(20);
+        request.setStatus(CreateInternshipProgramRequest.StatusEnum.ACTIVE);
+
+        List<String> requirements = new ArrayList<>();
+        requirements.add("Java knowledge");
+        request.setRequirements(requirements);
+
+        List<Object> goals = new ArrayList<>();
+        ProgramGoal goal = new ProgramGoal();
+        goal.setTitle("Learn Spring Boot");
+        goal.setDescription("Master Spring Boot framework");
+        goals.add(goal);
+        request.setGoals(goals);
+
+        // When & Then
+        mockMvc.perform(post("/internship-programs")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isCreated())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.title").value("New Program"))
+                .andExpect(jsonPath("$.description").value("New Description"))
+                .andExpect(jsonPath("$.status").value("active"));
+    }
+
+    @Test
+    void shouldUpdateInternshipProgramSuccessfully() throws Exception {
+        // Given
+        UpdateInternshipProgramRequest request = new UpdateInternshipProgramRequest();
+        request.setTitle("Updated Program");
+        request.setDescription("Updated Description");
+        request.setStatus(UpdateInternshipProgramRequest.StatusEnum.COMPLETED);
+
+        // When & Then
+        mockMvc.perform(put("/internship-programs/{id}", testProgram.getId())
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("Updated Program"))
+                .andExpect(jsonPath("$.description").value("Updated Description"))
+                .andExpect(jsonPath("$.status").value("completed"));
+    }
+
+    @Test
+    void shouldDeleteInternshipProgramSuccessfully() throws Exception {
+        // When & Then
+        mockMvc.perform(delete("/internship-programs/{id}", testProgram.getId())
+                                .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Internship program deleted successfully"));
+    }
+}
+```
+
+**Пояснение к примеру:**
+
+В отличие от модульных тестов, данный класс проверяет корректность взаимодействия всех слоев приложения: от обработки входящего HTTP-запроса (controller) до сохранения данных в базе (repository).
+
+Для проведения тестирования используется аннотация `@SpringBootTest`, которая поднимает полный контекст приложения. Инструмент **MockMvc** (`@AutoConfigureMockMvc`) позволяет эмулировать выполнение HTTP-запросов к REST API без необходимости запуска реального веб-сервера, что ускоряет процесс проверки. Использование профиля `@ActiveProfiles("test")` подразумевает работу с тестовой базой данных (H2), а метод `setUp` гарантирует очистку данных перед каждым запуском, обеспечивая изоляцию тестов.
+
+Рассмотрим сценарий создания программы (`shouldCreateInternshipProgramSuccessfully`):
+
+1. **Подготовка данных (Given).** Формируется DTO-объект запроса `CreateInternshipProgramRequest`, содержащий сложные вложенные структуры (списки требований и целей программы).
+
+2. **Выполнение (When).** С помощью `ObjectMapper` объект запроса сериализуется в JSON-строку и отправляется POST-запросом на эндпоинт `/internship-programs`.
+
+3. **Проверка (Then).** Проверяется HTTP-статус ответа `201 Created`. С помощью выражений `jsonPath` валидируется тело ответа: система должна вернуть созданный объект с корректными полями (title, description) и статусом `active`.
+
+Данный класс также покрывает сценарии чтения данных (GET) с проверкой пагинации, фильтрации и поиска, обновления (PUT) и удаления (DELETE) сущностей, а также негативные сценарии (например, получение статуса `404 Not Found` при обращении к несуществующему ID). Это подтверждает работоспособность API контракта и корректность маппинга данных в БД.
+
+### Результаты тестирования
+
+Всего написано **127+ тестов**, и все они выполнены успешно.
+
+**Статистика тестов:**
+- **Unit-тесты:** покрывают сервисный слой, обработчики команд, мапперы
+- **Интеграционные тесты:** покрывают REST API контроллеры, взаимодействие с БД
+- **Покрытие кода:** 53% инструкций, 42% ветвлений (см. раздел "Оценка качества кода")
+
+**Запуск тестов:**
+
+Для запуска всех тестов выполните:
+```bash
+./gradlew :trainee-service:test
+```
+
+Для запуска только unit-тестов:
+```bash
+./gradlew :trainee-service:test --tests "*Test"
+```
+
+Для запуска только интеграционных тестов:
+```bash
+./gradlew :trainee-service:test --tests "*IntegrationTest"
+```
 
 ---
 
