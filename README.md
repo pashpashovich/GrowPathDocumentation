@@ -40,15 +40,15 @@
 
 **Контекстный уровень представления архитектуры**
 
-<img width="721" height="641" alt="image" src="https://github.com/user-attachments/assets/b9bda70e-782f-4a5f-90bf-d683d6eaf28d" />
+<img width="920" height="950" alt="image" src="https://github.com/user-attachments/assets/2d0799ae-188f-4387-b7cd-17627a09be8d" />
 
 **Контейнерный уровень представления архитектуры**
 
-<img width="1291" height="1461" alt="Контейнерный уроверь drawio (1)" src="https://github.com/user-attachments/assets/9df61b40-e437-4488-8862-5e7d25319d17" />
+<img width="976" height="1106" alt="image" src="https://github.com/user-attachments/assets/bb2afca9-db24-4399-ac9b-b196b0d3a9b0" />
 
 **Компонентный уровень представления архитектуры**
 
-<img width="1519" height="655" alt="image" src="https://github.com/user-attachments/assets/1726de4f-2273-4798-83af-0bdce652b9a5" />
+<img width="976" height="426" alt="image" src="https://github.com/user-attachments/assets/89ee4d1e-d663-4d61-95df-0eecc14af89e" />
 
 **Кодовый уровень представления архитектуры**
 
